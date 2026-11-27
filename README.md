@@ -42,13 +42,46 @@ reports/                               human-readable reports (HTML), not commit
 
 Workflow: `.github/workflows/newman.yml` — **API regression (Newman)**.
 
-- Starts on push to `main` when `collections/**` or the workflow changes, and manually:
-  **Actions → API regression (Newman) → Run workflow**.
-- Job `newman` runs the collection with reporters `cli` (summary table in the log),
-  `json` and `htmlextra`. A failed assertion makes the run red.
-- Artifacts of every run (30 days): `newman-json-report`, `newman-html-report`.
-- Job `publish-report` publishes the HTML report to GitHub Pages — on `main` only,
-  also when assertions fail, and only if the report was actually produced.
+| Trigger | Jira check | Regression |
+|---|---|---|
+| push to `main` (`collections/**` or the workflow changed) | no | always |
+| manual run, `jira_gate` unchecked | no | always |
+| manual run, `jira_gate` checked | yes | only if Jira has matching issues |
+| weekly, Monday 07:00 UTC (`schedule`) | yes | only if Jira has matching issues |
+
+Manual run: **Actions → API regression (Newman) → Run workflow**.
+
+Jobs:
+
+1. `jira-gate` — only for the weekly run and a manual run with `jira_gate`:
+   - fails if the secrets `JIRA_EMAIL` / `JIRA_API_TOKEN` are missing (the run is not skipped silently);
+   - checks the login with `GET /rest/api/3/myself` and fails unless it is a real active Atlassian user —
+     Jira can answer anonymously (HTTP 200 and 0 issues) when credentials are wrong;
+   - searches with `POST /rest/api/3/search/jql`:
+     `project = DS AND labels = "api-testing" AND status = "IN QA"`
+     and writes the login and the found issues (with links) to the run summary.
+2. `newman` — runs the collection with reporters `cli` (summary table in the log), `json` and `htmlextra`.
+   Skipped when the gate found no issues; never runs after a failed gate. A failed assertion makes the run red.
+   Artifacts (30 days): `newman-json-report`, `newman-html-report`.
+3. `publish-report` — publishes the HTML report to GitHub Pages: on `main` only, also when assertions fail,
+   and only when `newman` really ran and produced the report.
+
+### Jira secrets
+
+Repository secrets (never in code). With [GitHub CLI](https://cli.github.com/):
+
+```bash
+gh secret set JIRA_EMAIL -R Shoolia/ai-api-testing
+gh secret set JIRA_API_TOKEN -R Shoolia/ai-api-testing
+```
+
+- `JIRA_EMAIL` — the e-mail you sign in to Atlassian (ds-test-rd.atlassian.net) with.
+- `JIRA_API_TOKEN` — created at https://id.atlassian.com/manage-profile/security/api-tokens
+  with **Create API token** (not "with scopes"). Tokens expire: create a new one and run
+  `gh secret set JIRA_API_TOKEN` again before the expiry date.
+
+Note: GitHub disables scheduled workflows in public repositories after 60 days without
+repository activity; re-enable it on the Actions tab if that happens.
 
 ## HTML report
 
