@@ -1,0 +1,512 @@
+{
+  "info": {
+    "_postman_id": "1f07ef7f-b454-59a5-b2f6-bca01a8ca31d",
+    "name": "Petstore CRUD Regression",
+    "description": "CRUD regression for the public Swagger Petstore API (https://petstore3.swagger.io/api/v3).\n\nFlow: Create pet -> Get -> Update -> Get -> Delete -> Verify deletion.\nRequests must run in this order: each step uses petId and expectedPet saved by the previous steps.\nExpected status codes and the Pet schema come from the Petstore OpenAPI (https://petstore3.swagger.io/api/v3/openapi.json).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Create pet",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// 1) Unique test data for this run, no fixed values.",
+              "// petId: current time in ms * 1000 + random 0..999.",
+              "// ~1.7e15 — unique per run, an int64 for the API and still a safe JS integer.",
+              "const petId = Date.now() * 1000 + Math.floor(Math.random() * 1000);",
+              "const runTag = \"ai-api-testing-\" + petId;",
+              "",
+              "const pet = {",
+              "    id: petId,",
+              "    name: \"regression-pet-\" + petId,",
+              "    category: { id: 1, name: \"Dogs\" },",
+              "    photoUrls: [\"https://example.com/\" + runTag + \".jpg\"],",
+              "    tags: [{ id: 1, name: \"ai-api-testing\" }],",
+              "    status: \"available\"",
+              "};",
+              "",
+              "pm.collectionVariables.set(\"petId\", petId);",
+              "// expectedPet = what the API should return for this pet right now.",
+              "pm.collectionVariables.set(\"expectedPet\", JSON.stringify(pet));",
+              "// The request body is built from the same object, so request and expectation cannot drift apart.",
+              "pm.collectionVariables.set(\"petBody\", JSON.stringify(pet));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// ---- shared helpers ----",
+              "const petSchema = JSON.parse(pm.collectionVariables.get(\"petSchema\"));",
+              "const expected = JSON.parse(pm.collectionVariables.get(\"expectedPet\") || \"{}\");",
+              "",
+              "function parseJson() {",
+              "    try { return pm.response.json(); } catch (e) { return undefined; }",
+              "}",
+              "",
+              "function checkPetResponse(body) {",
+              "    pm.test(\"Content-Type is application/json\", function () {",
+              "        pm.expect(pm.response.headers.get(\"Content-Type\") || \"\").to.include(\"application/json\");",
+              "    });",
+              "    pm.test(\"Response matches Pet schema (OpenAPI components.schemas.Pet)\", function () {",
+              "        pm.expect(body, \"response body is not JSON\").to.be.an(\"object\");",
+              "        pm.response.to.have.jsonSchema(petSchema);",
+              "    });",
+              "}",
+              "",
+              "function checkPetEqualsExpected(body, stepName) {",
+              "    pm.test(stepName + \": id equals generated petId\", function () {",
+              "        pm.expect(body.id).to.eql(expected.id);",
+              "    });",
+              "    pm.test(stepName + \": name equals expected\", function () {",
+              "        pm.expect(body.name).to.eql(expected.name);",
+              "    });",
+              "    pm.test(stepName + \": status equals expected\", function () {",
+              "        pm.expect(body.status).to.eql(expected.status);",
+              "    });",
+              "    pm.test(stepName + \": category equals expected\", function () {",
+              "        pm.expect(body.category).to.eql(expected.category);",
+              "    });",
+              "    pm.test(stepName + \": photoUrls equal expected\", function () {",
+              "        pm.expect(body.photoUrls).to.eql(expected.photoUrls);",
+              "    });",
+              "    pm.test(stepName + \": tags equal expected\", function () {",
+              "        pm.expect(body.tags).to.eql(expected.tags);",
+              "    });",
+              "}",
+              "// ---- end of helpers ----",
+              "",
+              "const body = parseJson();",
+              "",
+              "pm.test(\"Status code is 200 (OpenAPI: addPet 200 Successful operation)\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "checkPetResponse(body);",
+              "if (body) { checkPetEqualsExpected(body, \"Create\"); }"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/pet",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "pet"
+          ]
+        },
+        "description": "Creates a pet with a unique id generated in the pre-request script. OpenAPI: POST /pet (addPet).",
+        "body": {
+          "mode": "raw",
+          "raw": "{{petBody}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "2. Get pet",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// ---- shared helpers ----",
+              "const petSchema = JSON.parse(pm.collectionVariables.get(\"petSchema\"));",
+              "const expected = JSON.parse(pm.collectionVariables.get(\"expectedPet\") || \"{}\");",
+              "",
+              "function parseJson() {",
+              "    try { return pm.response.json(); } catch (e) { return undefined; }",
+              "}",
+              "",
+              "function checkPetResponse(body) {",
+              "    pm.test(\"Content-Type is application/json\", function () {",
+              "        pm.expect(pm.response.headers.get(\"Content-Type\") || \"\").to.include(\"application/json\");",
+              "    });",
+              "    pm.test(\"Response matches Pet schema (OpenAPI components.schemas.Pet)\", function () {",
+              "        pm.expect(body, \"response body is not JSON\").to.be.an(\"object\");",
+              "        pm.response.to.have.jsonSchema(petSchema);",
+              "    });",
+              "}",
+              "",
+              "function checkPetEqualsExpected(body, stepName) {",
+              "    pm.test(stepName + \": id equals generated petId\", function () {",
+              "        pm.expect(body.id).to.eql(expected.id);",
+              "    });",
+              "    pm.test(stepName + \": name equals expected\", function () {",
+              "        pm.expect(body.name).to.eql(expected.name);",
+              "    });",
+              "    pm.test(stepName + \": status equals expected\", function () {",
+              "        pm.expect(body.status).to.eql(expected.status);",
+              "    });",
+              "    pm.test(stepName + \": category equals expected\", function () {",
+              "        pm.expect(body.category).to.eql(expected.category);",
+              "    });",
+              "    pm.test(stepName + \": photoUrls equal expected\", function () {",
+              "        pm.expect(body.photoUrls).to.eql(expected.photoUrls);",
+              "    });",
+              "    pm.test(stepName + \": tags equal expected\", function () {",
+              "        pm.expect(body.tags).to.eql(expected.tags);",
+              "    });",
+              "}",
+              "// ---- end of helpers ----",
+              "",
+              "const body = parseJson();",
+              "",
+              "pm.test(\"Status code is 200 (OpenAPI: getPetById 200 successful operation)\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "checkPetResponse(body);",
+              "if (body) { checkPetEqualsExpected(body, \"Get after create\"); }"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/pet/{{petId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "pet",
+            "{{petId}}"
+          ]
+        },
+        "description": "Reads the created pet and compares it with what was sent. OpenAPI: GET /pet/{petId} (getPetById)."
+      },
+      "response": []
+    },
+    {
+      "name": "3. Update pet",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Change name and status of the same pet; everything else stays as created.",
+              "const pet = JSON.parse(pm.collectionVariables.get(\"expectedPet\"));",
+              "pet.name = pet.name + \"-updated\";",
+              "pet.status = \"sold\";",
+              "",
+              "pm.collectionVariables.set(\"expectedPet\", JSON.stringify(pet));",
+              "pm.collectionVariables.set(\"petBody\", JSON.stringify(pet));"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// ---- shared helpers ----",
+              "const petSchema = JSON.parse(pm.collectionVariables.get(\"petSchema\"));",
+              "const expected = JSON.parse(pm.collectionVariables.get(\"expectedPet\") || \"{}\");",
+              "",
+              "function parseJson() {",
+              "    try { return pm.response.json(); } catch (e) { return undefined; }",
+              "}",
+              "",
+              "function checkPetResponse(body) {",
+              "    pm.test(\"Content-Type is application/json\", function () {",
+              "        pm.expect(pm.response.headers.get(\"Content-Type\") || \"\").to.include(\"application/json\");",
+              "    });",
+              "    pm.test(\"Response matches Pet schema (OpenAPI components.schemas.Pet)\", function () {",
+              "        pm.expect(body, \"response body is not JSON\").to.be.an(\"object\");",
+              "        pm.response.to.have.jsonSchema(petSchema);",
+              "    });",
+              "}",
+              "",
+              "function checkPetEqualsExpected(body, stepName) {",
+              "    pm.test(stepName + \": id equals generated petId\", function () {",
+              "        pm.expect(body.id).to.eql(expected.id);",
+              "    });",
+              "    pm.test(stepName + \": name equals expected\", function () {",
+              "        pm.expect(body.name).to.eql(expected.name);",
+              "    });",
+              "    pm.test(stepName + \": status equals expected\", function () {",
+              "        pm.expect(body.status).to.eql(expected.status);",
+              "    });",
+              "    pm.test(stepName + \": category equals expected\", function () {",
+              "        pm.expect(body.category).to.eql(expected.category);",
+              "    });",
+              "    pm.test(stepName + \": photoUrls equal expected\", function () {",
+              "        pm.expect(body.photoUrls).to.eql(expected.photoUrls);",
+              "    });",
+              "    pm.test(stepName + \": tags equal expected\", function () {",
+              "        pm.expect(body.tags).to.eql(expected.tags);",
+              "    });",
+              "}",
+              "// ---- end of helpers ----",
+              "",
+              "const body = parseJson();",
+              "",
+              "pm.test(\"Status code is 200 (OpenAPI: updatePet 200 Successful operation)\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "checkPetResponse(body);",
+              "if (body) { checkPetEqualsExpected(body, \"Update\"); }"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/pet",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "pet"
+          ]
+        },
+        "description": "Changes name and status of the same pet. OpenAPI: PUT /pet (updatePet).",
+        "body": {
+          "mode": "raw",
+          "raw": "{{petBody}}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "4. Get pet after update",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// ---- shared helpers ----",
+              "const petSchema = JSON.parse(pm.collectionVariables.get(\"petSchema\"));",
+              "const expected = JSON.parse(pm.collectionVariables.get(\"expectedPet\") || \"{}\");",
+              "",
+              "function parseJson() {",
+              "    try { return pm.response.json(); } catch (e) { return undefined; }",
+              "}",
+              "",
+              "function checkPetResponse(body) {",
+              "    pm.test(\"Content-Type is application/json\", function () {",
+              "        pm.expect(pm.response.headers.get(\"Content-Type\") || \"\").to.include(\"application/json\");",
+              "    });",
+              "    pm.test(\"Response matches Pet schema (OpenAPI components.schemas.Pet)\", function () {",
+              "        pm.expect(body, \"response body is not JSON\").to.be.an(\"object\");",
+              "        pm.response.to.have.jsonSchema(petSchema);",
+              "    });",
+              "}",
+              "",
+              "function checkPetEqualsExpected(body, stepName) {",
+              "    pm.test(stepName + \": id equals generated petId\", function () {",
+              "        pm.expect(body.id).to.eql(expected.id);",
+              "    });",
+              "    pm.test(stepName + \": name equals expected\", function () {",
+              "        pm.expect(body.name).to.eql(expected.name);",
+              "    });",
+              "    pm.test(stepName + \": status equals expected\", function () {",
+              "        pm.expect(body.status).to.eql(expected.status);",
+              "    });",
+              "    pm.test(stepName + \": category equals expected\", function () {",
+              "        pm.expect(body.category).to.eql(expected.category);",
+              "    });",
+              "    pm.test(stepName + \": photoUrls equal expected\", function () {",
+              "        pm.expect(body.photoUrls).to.eql(expected.photoUrls);",
+              "    });",
+              "    pm.test(stepName + \": tags equal expected\", function () {",
+              "        pm.expect(body.tags).to.eql(expected.tags);",
+              "    });",
+              "}",
+              "// ---- end of helpers ----",
+              "",
+              "const body = parseJson();",
+              "",
+              "pm.test(\"Status code is 200 (OpenAPI: getPetById 200 successful operation)\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "checkPetResponse(body);",
+              "// Proves the update was persisted, not only echoed back by PUT.",
+              "if (body) { checkPetEqualsExpected(body, \"Get after update\"); }"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/pet/{{petId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "pet",
+            "{{petId}}"
+          ]
+        },
+        "description": "Reads the pet again to prove the update was saved. OpenAPI: GET /pet/{petId} (getPetById)."
+      },
+      "response": []
+    },
+    {
+      "name": "5. Delete pet",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// OpenAPI: deletePet 200 \"Pet deleted\" — no response body is documented,",
+              "// so only the status code is asserted.",
+              "pm.test(\"Status code is 200 (OpenAPI: deletePet 200 Pet deleted)\", function () {",
+              "    pm.response.to.have.status(200);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "DELETE",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/pet/{{petId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "pet",
+            "{{petId}}"
+          ]
+        },
+        "description": "Deletes the pet created by this run (clean-up). OpenAPI: DELETE /pet/{petId} (deletePet)."
+      },
+      "response": []
+    },
+    {
+      "name": "6. Verify deletion",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// OpenAPI: getPetById 404 \"Pet not found\". The body for 404 is not documented,",
+              "// so only the status code is asserted.",
+              "pm.test(\"Deleted pet is not found: status code is 404 (OpenAPI: getPetById 404 Pet not found)\", function () {",
+              "    pm.response.to.have.status(404);",
+              "});",
+              "",
+              "// Clean up run-time variables so the next run starts from a clean state.",
+              "[\"petId\", \"expectedPet\", \"petBody\"].forEach(function (key) {",
+              "    pm.collectionVariables.unset(key);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/pet/{{petId}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "pet",
+            "{{petId}}"
+          ]
+        },
+        "description": "The deleted pet must not be found (404). Clears run-time variables. OpenAPI: GET /pet/{petId} (getPetById)."
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://petstore3.swagger.io/api/v3",
+      "type": "string"
+    },
+    {
+      "key": "petSchema",
+      "value": "{\"type\": \"object\", \"required\": [\"name\", \"photoUrls\"], \"properties\": {\"id\": {\"type\": \"integer\"}, \"name\": {\"type\": \"string\"}, \"category\": {\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"integer\"}, \"name\": {\"type\": \"string\"}}}, \"photoUrls\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"tags\": {\"type\": \"array\", \"items\": {\"type\": \"object\", \"properties\": {\"id\": {\"type\": \"integer\"}, \"name\": {\"type\": \"string\"}}}}, \"status\": {\"type\": \"string\", \"enum\": [\"available\", \"pending\", \"sold\"]}}}",
+      "type": "string"
+    },
+    {
+      "key": "petId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "expectedPet",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "petBody",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

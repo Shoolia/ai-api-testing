@@ -1,0 +1,20 @@
+# Run output: generated on every run, never committed
+results/*
+!results/.gitkeep
+reports/*
+!reports/.gitkeep
+
+# Node / Newman installed locally
+node_modules/
+package-lock.json
+
+# Secrets and local environment overrides
+.env
+*.env
+*.postman_environment.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
