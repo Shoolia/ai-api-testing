@@ -38,6 +38,31 @@ results/                               machine-readable run results (JSON), not 
 reports/                               human-readable reports (HTML), not committed
 ```
 
+## Run in GitHub Actions
+
+Workflow: `.github/workflows/newman.yml` — **API regression (Newman)**.
+
+- Starts on push to `main` when `collections/**` or the workflow changes, and manually:
+  **Actions → API regression (Newman) → Run workflow**.
+- Job `newman` runs the collection with reporters `cli` (summary table in the log),
+  `json` and `htmlextra`. A failed assertion makes the run red.
+- Artifacts of every run (30 days): `newman-json-report`, `newman-html-report`.
+- Job `publish-report` publishes the HTML report to GitHub Pages — on `main` only,
+  also when assertions fail, and only if the report was actually produced.
+
+## HTML report
+
+Latest report from `main`: **https://shoolia.github.io/ai-api-testing/**
+
+The page is replaced on every run on `main`. Reports of older runs stay available as the
+`newman-html-report` artifact on each run's page.
+
+One-time setup (repository admin): **Settings → Pages → Build and deployment → Source: GitHub Actions**.
+
+The report shows request and response bodies. That is fine for the public Petstore; for an API with
+personal data or tokens add `--reporter-htmlextra-skipSensitiveData` (or `--reporter-htmlextra-skipHeaders "Authorization"`),
+because a GitHub Pages site of a public repository is visible to everyone.
+
 ## Run locally
 
 Requires [Node.js](https://nodejs.org/) (LTS).
@@ -51,6 +76,13 @@ Save a JSON result as well:
 
 ```bash
 newman run collections/petstore-collection.json -r cli,json --reporter-json-export results/newman-report.json
+```
+
+With the HTML report (open `reports/index.html` in a browser afterwards):
+
+```bash
+npm install -g newman-reporter-htmlextra
+newman run collections/petstore-collection.json -r cli,htmlextra --reporter-htmlextra-export reports/index.html
 ```
 
 Run against another server (the collection variable is overridden for this run only):
