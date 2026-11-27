@@ -67,6 +67,8 @@ jobs:
           fi
 
       - name: Upload JSON report
+        # always(): upload the report also when the run failed —
+        # that is exactly when it is needed.
         if: always()
         uses: actions/upload-artifact@v7
         with:
