@@ -45,6 +45,8 @@ jobs:
       - name: Run collection
         # Newman exits with a non-zero code when any assertion fails,
         # so a failed test makes this step (and the run) red.
+        # Timezone: htmlextra bundles tz data 2021e — it knows "Europe/Kiev",
+        # not "Europe/Kyiv"; an unknown zone silently falls back to UTC.
         run: >
           newman run collections/petstore-collection.json
           --reporters cli,json,htmlextra
@@ -52,7 +54,7 @@ jobs:
           --reporter-htmlextra-export reports/index.html
           --reporter-htmlextra-title "Petstore CRUD Regression"
           --reporter-htmlextra-browserTitle "Petstore API regression report"
-          --reporter-htmlextra-timezone "Europe/Kyiv"
+          --reporter-htmlextra-timezone "Europe/Kiev"
 
       - name: Check that the HTML report exists
         id: report-check
