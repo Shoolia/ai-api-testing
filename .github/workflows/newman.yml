@@ -10,7 +10,8 @@ on:
   # Run manually: Actions -> API regression (Newman) -> Run workflow.
   workflow_dispatch:
 
-# The job only reads the repository.
+# Default for all jobs: read the repository only.
+# publish-report gets the extra permissions it needs below.
 permissions:
   contents: read
 
@@ -19,6 +20,9 @@ jobs:
     name: Run Petstore CRUD collection
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      # "true" when the HTML report file was produced — publish-report needs it.
+      report_generated: ${{ steps.report-check.outputs.generated }}
 
     steps:
       - name: Check out repository
@@ -29,21 +33,38 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install Newman 6
-        run: npm install -g newman@6
+      - name: Install Newman 6 and HTML reporter
+        run: npm install -g newman@6 newman-reporter-htmlextra
 
       - name: Show versions
         run: |
           node --version
           newman --version
+          npm ls -g newman-reporter-htmlextra --depth=0
 
       - name: Run collection
         # Newman exits with a non-zero code when any assertion fails,
         # so a failed test makes this step (and the run) red.
         run: >
           newman run collections/petstore-collection.json
-          --reporters cli,json
+          --reporters cli,json,htmlextra
           --reporter-json-export results/newman-report.json
+          --reporter-htmlextra-export reports/index.html
+          --reporter-htmlextra-title "Petstore CRUD Regression"
+          --reporter-htmlextra-browserTitle "Petstore API regression report"
+          --reporter-htmlextra-timezone "Europe/Kyiv"
+
+      - name: Check that the HTML report exists
+        id: report-check
+        # always(): runs also when assertions failed in the previous step.
+        if: always()
+        run: |
+          if [ -f reports/index.html ]; then
+            echo "generated=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "generated=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::reports/index.html was not created — Newman did not run to the end."
+          fi
 
       - name: Upload JSON report
         # always(): upload the report also when the run failed —
@@ -55,3 +76,43 @@ jobs:
           path: results/newman-report.json
           if-no-files-found: warn
           retention-days: 30
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: newman-html-report
+          path: reports/index.html
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Prepare HTML report for GitHub Pages
+        # Only main publishes to Pages; also when assertions failed.
+        if: always() && github.ref == 'refs/heads/main' && steps.report-check.outputs.generated == 'true'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: reports/
+
+  publish-report:
+    name: Publish HTML report to GitHub Pages
+    needs: newman
+    # always(): publish also when newman failed on assertions,
+    # but only on main and only if the report was really produced.
+    if: always() && github.ref == 'refs/heads/main' && needs.newman.outputs.report_generated == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write      # create the Pages deployment
+      id-token: write   # prove the deployment comes from this workflow
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # Never run two Pages deployments at the same time.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
