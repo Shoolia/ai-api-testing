@@ -1,23 +1,147 @@
 name: API regression (Newman)
 
 on:
-  # Run when the collection or this workflow changes on main.
+  # Run when the collection or this workflow changes on main — no Jira check.
   push:
     branches: [main]
     paths:
       - "collections/**"
       - ".github/workflows/newman.yml"
   # Run manually: Actions -> API regression (Newman) -> Run workflow.
+  # Without jira_gate: regression runs right away (no Jira check).
+  # With jira_gate: the same Jira check as the weekly run.
   workflow_dispatch:
+    inputs:
+      jira_gate:
+        description: "Check Jira first (as the weekly run does): run regression only if there are matching issues"
+        type: boolean
+        default: false
+  # Weekly: every Monday at 07:00 UTC (cron is always UTC). Always uses the Jira check.
+  schedule:
+    - cron: "0 7 * * 1"
 
 # Default for all jobs: read the repository only.
 # publish-report gets the extra permissions it needs below.
 permissions:
   contents: read
 
+env:
+  JIRA_BASE_URL: https://ds-test-rd.atlassian.net
+  # Label and status checked in Jira project DS (status "IN QA" = ready for testing).
+  JIRA_JQL: 'project = DS AND labels = "api-testing" AND status = "IN QA" ORDER BY key ASC'
+
 jobs:
+  jira-gate:
+    name: Jira gate (api-testing issues in IN QA)
+    # Only the weekly run and a manual run with jira_gate=true check Jira.
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.jira_gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run_regression: ${{ steps.search.outputs.run_regression }}
+      issue_count: ${{ steps.search.outputs.issue_count }}
+
+    steps:
+      - name: Check that Jira secrets are set
+        env:
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          missing=""
+          [ -z "$JIRA_EMAIL" ] && missing="$missing JIRA_EMAIL"
+          [ -z "$JIRA_API_TOKEN" ] && missing="$missing JIRA_API_TOKEN"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing. Add them in Settings -> Secrets and variables -> Actions. The Jira gate cannot decide, so the run fails instead of being skipped silently."
+            exit 1
+          fi
+          echo "Both Jira secrets are set."
+
+      - name: Verify Jira login (/rest/api/3/myself)
+        # Jira can answer some requests anonymously (HTTP 200, 0 issues) when the
+        # credentials are wrong. So the login is checked first and must be a real user.
+        env:
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          code=$(curl -sS -o myself.json -w '%{http_code}' \
+            -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+            -H "Accept: application/json" \
+            "$JIRA_BASE_URL/rest/api/3/myself")
+          account_id=$(jq -r '.accountId // empty' myself.json 2>/dev/null || true)
+          account_type=$(jq -r '.accountType // empty' myself.json 2>/dev/null || true)
+          active=$(jq -r '.active // empty' myself.json 2>/dev/null || true)
+          display_name=$(jq -r '.displayName // empty' myself.json 2>/dev/null || true)
+
+          if [ "$code" != "200" ] || [ -z "$account_id" ] || [ "$account_id" = "unknown" ] \
+             || [ "$account_type" != "atlassian" ] || [ "$active" != "true" ]; then
+            echo "::error::Jira login failed: HTTP $code, accountId='${account_id:-none}', accountType='${account_type:-none}', active='${active:-none}'. Check JIRA_EMAIL (the e-mail you sign in to Atlassian with) and JIRA_API_TOKEN (not expired, created at id.atlassian.com)."
+            exit 1
+          fi
+
+          echo "Logged in to Jira as: $display_name ($account_id)"
+          {
+            echo "## Jira gate"
+            echo ""
+            echo "Logged in to Jira as **$display_name** (accountId \`$account_id\`)."
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Search issues (/rest/api/3/search/jql)
+        id: search
+        env:
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          body=$(jq -n --arg jql "$JIRA_JQL" '{jql: $jql, fields: ["summary", "status"], maxResults: 100}')
+          code=$(curl -sS -o search.json -w '%{http_code}' \
+            -u "$JIRA_EMAIL:$JIRA_API_TOKEN" \
+            -H "Accept: application/json" -H "Content-Type: application/json" \
+            -X POST --data "$body" \
+            "$JIRA_BASE_URL/rest/api/3/search/jql")
+          if [ "$code" != "200" ]; then
+            echo "::error::Jira search failed: HTTP $code"
+            cat search.json
+            exit 1
+          fi
+
+          count=$(jq '.issues | length' search.json)
+          is_last=$(jq -r '.isLast' search.json)
+          echo "Found $count issue(s) (isLast=$is_last) for: $JIRA_JQL"
+
+          {
+            echo "JQL: \`$JIRA_JQL\`"
+            echo ""
+            echo "Found **$count** issue(s)."
+            echo ""
+            if [ "$count" -gt 0 ]; then
+              echo "| Issue | Summary | Status |"
+              echo "|---|---|---|"
+              jq -r --arg base "$JIRA_BASE_URL" \
+                '.issues[] | "| [\(.key)](\($base)/browse/\(.key)) | \(.fields.summary | gsub("\\|"; "\\|")) | \(.fields.status.name) |"' search.json
+              echo ""
+              echo "➡️ Regression **will run**."
+            else
+              echo "⏭️ No matching issues — regression **skipped**."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "issue_count=$count" >> "$GITHUB_OUTPUT"
+          if [ "$count" -gt 0 ]; then
+            echo "run_regression=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_regression=false" >> "$GITHUB_OUTPUT"
+          fi
+
   newman:
     name: Run Petstore CRUD collection
+    needs: jira-gate
+    # Runs when the gate was not used (push, plain manual run),
+    # or when the gate succeeded and found issues. Never after a failed gate.
+    if: >-
+      !cancelled() && (
+        needs.jira-gate.result == 'skipped' ||
+        (needs.jira-gate.result == 'success' && needs.jira-gate.outputs.run_regression == 'true')
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -98,9 +222,12 @@ jobs:
   publish-report:
     name: Publish HTML report to GitHub Pages
     needs: newman
-    # always(): publish also when newman failed on assertions,
-    # but only on main and only if the report was really produced.
-    if: always() && github.ref == 'refs/heads/main' && needs.newman.outputs.report_generated == 'true'
+    # Publish also when assertions failed, but only on main and only when
+    # newman really ran and produced the report (not when it was skipped by the gate).
+    if: >-
+      !cancelled() && github.ref == 'refs/heads/main' &&
+      (needs.newman.result == 'success' || needs.newman.result == 'failure') &&
+      needs.newman.outputs.report_generated == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
